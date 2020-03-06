@@ -18,7 +18,7 @@
  * I/O to be done-- e.g. swbuf, just below, for
  * swapping.
  */
-char	buffers[NBUF][514];
+char	buffers[NBUF][514];     // 实际的数据缓冲区：lion95
 struct	buf	swbuf;
 
 /*
@@ -52,6 +52,9 @@ int	httab;
 /*
  * Read in (if necessary) the block and return a buffer pointer.
  */
+/*
+ * 读磁盘块算法：unix41
+ */
 bread(dev, blkno)
 {
 	register struct buf *rbp;
@@ -69,6 +72,9 @@ bread(dev, blkno)
 /*
  * Read in the block, like bread, but also start I/O on the
  * read-ahead block (which is not allocated to the caller)
+ */
+/*
+ * 提前读块算法：unix42
  */
 breada(adev, blkno, rablkno)
 {
@@ -105,6 +111,9 @@ breada(adev, blkno, rablkno)
  * Write the buffer, waiting for completion.
  * Then release the buffer.
  */
+/*
+ * 写磁盘块算法：unix43
+ */
 bwrite(bp)
 struct buf *bp;
 {
@@ -116,7 +125,7 @@ struct buf *bp;
 	rbp->b_flags =& ~(B_READ | B_DONE | B_ERROR | B_DELWRI);
 	rbp->b_wcount = -256;
 	(*bdevsw[rbp->b_dev.d_major].d_strategy)(rbp);
-	if ((flag&B_ASYNC) == 0) {
+	if ((flag&B_ASYNC) == 0) {  
 		iowait(rbp);
 		brelse(rbp);
 	} else if ((flag&B_DELWRI)==0)
@@ -162,6 +171,9 @@ struct buf *bp;
 
 /*
  * release the buffer, with no I/O implied.
+ */
+/*
+ * 释放缓冲区算法：unix35
  */
 brelse(bp)
 struct buf *bp;
@@ -215,7 +227,7 @@ incore(adev, blkno)
  * (e.g. during exec, for the user arglist) getblk can be called
  * with device NODEV to avoid unwanted associativity.
  */
-getblk(dev, blkno)
+getblk(dev, blkno)  //unix33: 算法说明
 {
 	register struct buf *bp;
 	register struct devtab *dp;
@@ -228,42 +240,42 @@ getblk(dev, blkno)
 	if (dev < 0)
 		dp = &bfreelist;
 	else {
-		dp = bdevsw[dev.d_major].d_tab;
+		dp = bdevsw[dev.d_major].d_tab;  // bdevsw定义在conf.h, dp指向散列表？
 		if(dp == NULL)
 			panic("devtab");
 		for (bp=dp->b_forw; bp != dp; bp = bp->b_forw) {
 			if (bp->b_blkno!=blkno || bp->b_dev!=dev)
 				continue;
-			spl6();
+			spl6();   //lion104：到此点，说明块在散列队列中找到
 			if (bp->b_flags&B_BUSY) {
 				bp->b_flags =| B_WANTED;
-				sleep(bp, PRIBIO);
+				sleep(bp, PRIBIO);   //等候“块为空闲”的事件
 				spl0();
 				goto loop;
 			}
-			spl0();
+			spl0();   /*到此点，说明块不忙，即在空闲表中，所以才有下面的解链*/
 			notavail(bp);
 			return(bp);
 		}
 	}
-	spl6();
-	if (bfreelist.av_forw == &bfreelist) {
+	spl6();   /* 到此点，说明块不在散列队列中 */
+	if (bfreelist.av_forw == &bfreelist) {   /*空闲表上无缓冲区*/
 		bfreelist.b_flags =| B_WANTED;
 		sleep(&bfreelist, PRIBIO);
 		spl0();
 		goto loop;
 	}
 	spl0();
-	notavail(bp = bfreelist.av_forw);
-	if (bp->b_flags & B_DELWRI) {
+	notavail(bp = bfreelist.av_forw);   /*摘下空闲表的第一个缓冲区*/
+	if (bp->b_flags & B_DELWRI) {   /*缓冲区为延迟写*/
 		bp->b_flags =| B_ASYNC;
 		bwrite(bp);
 		goto loop;
 	}
 	bp->b_flags = B_BUSY | B_RELOC;
-	bp->b_back->b_forw = bp->b_forw;
+	bp->b_back->b_forw = bp->b_forw;  /*从旧的散列队列中摘下缓冲区*/
 	bp->b_forw->b_back = bp->b_back;
-	bp->b_forw = dp->b_forw;
+	bp->b_forw = dp->b_forw;          /*把缓冲区投入到新散列队列*/
 	bp->b_back = dp;
 	dp->b_forw->b_back = bp;
 	dp->b_forw = bp;
@@ -293,6 +305,9 @@ struct buf *bp;
  * Unlink a buffer from the available list and mark it busy.
  * (internal interface)
  */
+/*
+ * 将bp从空闲表中摘除，并标记为忙，参考unix34
+ */ 
 notavail(bp)
 struct buf *bp;
 {

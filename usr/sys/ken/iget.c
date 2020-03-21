@@ -24,6 +24,9 @@
  *	system is not in the mount table.
  *	"cannot happen"
  */
+/*
+ * 算法描述：unix49、lion124
+ */
 iget(dev, ino)
 {
 	register struct inode *p;
@@ -35,7 +38,7 @@ loop:
 	ip = NULL;
 	for(p = &inode[0]; p < &inode[NINODE]; p++) {
 		if(dev==p->i_dev && ino==p->i_number) {
-			if((p->i_flag&ILOCK) != 0) {
+			if((p->i_flag&ILOCK) != 0) {  
 				p->i_flag =| IWANT;
 				sleep(p, PINOD);
 				goto loop;
@@ -53,10 +56,10 @@ loop:
 			p->i_flag =| ILOCK;
 			return(p);
 		}
-		if(ip==NULL && p->i_count==0)
+		if(ip==NULL && p->i_count==0)   /* ip指向inode表中第一个空闲项 */
 			ip = p;
 	}
-	if((p=ip) == NULL) {
+	if((p=ip) == NULL) {  /* ip为空表明空闲表上没有索引节点 */
 		printf("Inode table overflow\n");
 		u.u_error = ENFILE;
 		return(NULL);
@@ -66,7 +69,12 @@ loop:
 	p->i_flag = ILOCK;
 	p->i_count++;
 	p->i_lastr = -1;
-	ip = bread(dev, ldiv(ino+31,16));
+	ip = bread(dev, ldiv(ino+31,16));    /* 读包含inode的块：
+		* 1、从#2块开始存放inode信息（#0块UNIX忽略不用、“超级块”占据了磁盘的#1块） 
+		* 2、每个块可容纳16个inode
+		* 3、inode编号从1（而不是0）开始
+		*/
+		
 	/*
 	 * Check I/O errors
 	 */
@@ -75,9 +83,9 @@ loop:
 		iput(p);
 		return(NULL);
 	}
-	ip1 = ip->b_addr + 32*lrem(ino+31, 16);
+	ip1 = ip->b_addr + 32*lrem(ino+31, 16);  /* inode在块中的字节偏移量：每个磁盘inode占据32字节 */
 	ip2 = &p->i_mode;
-	while(ip2 < &p->i_addr[8])
+	while(ip2 < &p->i_addr[8])   /* 将磁盘inode(ino.h)拷贝到内存inode：二者从i_mode至i_addr参数相同 */
 		*ip2++ = *ip1++;
 	brelse(ip);
 	return(p);
@@ -96,9 +104,9 @@ struct inode *p;
 	register *rp;
 
 	rp = p;
-	if(rp->i_count == 1) {
+	if(rp->i_count == 1) {  /* 引用计数为1时，将释放内存inode，要对inode上锁*/
 		rp->i_flag =| ILOCK;
-		if(rp->i_nlink <= 0) {
+		if(rp->i_nlink <= 0) {  /* 若联结数为0，则删除该文件 */
 			itrunc(rp);
 			rp->i_mode = 0;
 			ifree(rp->i_dev, rp->i_number);
